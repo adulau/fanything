@@ -5,7 +5,7 @@
 
 
 `fanything` is an experimental, patent-unencumbered fingerprinting format and
-pcap extractor for correlating SSH and TLS handshakes.
+pcap extractor for correlating SSH, TLS, and QUIC handshakes.
 
 The repository defines a small algorithm named **FAN/1** (Flexible Active
 Network fingerprint, version 1). FAN/1 is intentionally simple: each
@@ -22,8 +22,8 @@ fan1:<protocol>:<role>:<base64url-normalized-features>:sha256:<hex-digest>
 ```
 
 * `fan1` identifies the algorithm version.
-* `<protocol>` is currently `tls` or `ssh`, but the namespace can be extended to
-  other services.
+* `<protocol>` is currently `tls`, `ssh`, or `quic`, but the namespace can be
+  extended to other services.
 * `<role>` identifies handshake direction, for example `client`, `server`, or
   `peer`.
 * `<base64url-normalized-features>` is the normalized canonical feature string,
@@ -100,16 +100,47 @@ Normalization rules:
 * Comma-separated algorithm lists preserve wire order.
 * Missing fields are represented as empty strings.
 
+### QUIC fingerprints
+
+QUIC fingerprints are built from QUIC Initial packets. When Python
+`cryptography` is available, `fanfp.py` derives QUIC Initial secrets for QUIC v1
+and draft-29, decrypts CRYPTO frames, reassembles the TLS handshake stream, and
+emits TLS-derived client or server features under the `quic` protocol:
+
+```text
+quic|client|v=<quic_version>|tls_v=<legacy_tls_version>|c=<cipher_suites>|e=<extensions>|g=<supported_groups>|p=<ec_point_formats>|sv=<supported_versions>|alpn=<alpn_protocols>|sig=<signature_algorithms>
+quic|server|v=<quic_version>|tls_v=<legacy_tls_version>|c=<selected_cipher>|e=<extensions>|sv=<selected_supported_version>
+```
+
+If Initial decryption is unavailable, the extractor falls back to QUIC long
+header metadata:
+
+```text
+quic|peer|v=<quic_version>|type=initial|dcid_len=<destination_connection_id_length>|scid_len=<source_connection_id_length>|token_len=<token_length>|len=<packet_length>
+```
+
+Normalization rules:
+
+* QUIC and TLS version values are decimal integers.
+* TLS list fields follow the same normalization rules as TCP TLS fingerprints.
+
 ## Usage
 
 ```bash
 python3 fanfp.py capture.pcap
+python3 fanfp.py test/chromium-perdu.com-quick.pcap
 ```
 
 The command emits one JSON object per fingerprint:
 
 ```json
 {"protocol":"tls","role":"client","fingerprint":"fan1:tls:client:...","features":"tls|client|...","sha256":"...","flow":{"src":"192.0.2.10","sport":51514,"dst":"198.51.100.20","dport":443}}
+```
+
+Local QUIC fixture test:
+
+```bash
+test/fanfp-quic.sh
 ```
 
 ## MISP correlation hints
@@ -124,5 +155,5 @@ Recommended storage approaches:
   back to packets.
 
 Because FAN/1 embeds the protocol and role in the fingerprint, mixed SSH, TLS,
-and future service fingerprints can share the same attribute namespace without
-losing type information.
+QUIC, and future service fingerprints can share the same attribute namespace
+without losing type information.
