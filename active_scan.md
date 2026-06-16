@@ -8,7 +8,6 @@ output metadata:
 ```text
 fingerprint: fan1:tls:server:active:<base64url-features>:sha256:<digest>
 features: tls|server|v=<legacy_version>|c=<selected_cipher>|e=<extensions>|sv=<selected_supported_version>
-features: ssh|peer|id=<software_id>|...
 ```
 
 The active TLS scanner exposes protocol-version probes:

@@ -44,9 +44,9 @@ FAN/1 fingerprints can be collected in two modes:
   `fanfp.py` is passive and emits `"mode":"passive"` in each JSON object and
   in each FAN/1 fingerprint prefix.
 * `active` means the collector creates its own network interaction with the
-  endpoint. The NSE script `fanything-tls.nse` is active: it connects to the target,
-  sends SSH or TLS probes, emits `mode: active` in Nmap output, and embeds
-  `active` in each FAN/1 fingerprint prefix.
+  endpoint. The NSE scripts `fanything-tls.nse` and `fanything-ssh.nse` are
+  active: they connect to the target, send protocol probes, emit `mode: active`
+  in Nmap output, and embed `active` in each FAN/1 fingerprint prefix.
 
 The collection mode is part of the FAN/1 prefix and output metadata, but not the
 normalized feature string. Store `mode` as metadata too, so active probes and
@@ -140,9 +140,10 @@ Active service probing with Nmap NSE:
 
 ```bash
 nmap -Pn -p443 --script ./fanything-tls.nse 192.0.2.20
+nmap -Pn -p22 --script ./fanything-ssh.nse 192.0.2.20
 ```
 
-The NSE script probes TLS in this order: `TLSv1.3`, `TLSv1.2`, `TLSv1.1`,
+The TLS NSE script probes TLS in this order: `TLSv1.3`, `TLSv1.2`, `TLSv1.1`,
 `TLSv1.0`, `SSLv3`, then `SSLv2`, and stops at the first full server
 fingerprint. A single protocol version can be forced for testing:
 
@@ -154,10 +155,16 @@ Cipher tables are version-oriented in the script. See [active_scan.md](active_sc
 for cipher-suite rationale and the Firefox/NSS source references used for TLS
 1.3, TLS 1.2, and historical SSLv3-era ordering.
 
+The SSH NSE script sends an SSH identification string, reads the server
+identification string and `SSH_MSG_KEXINIT` when available, then emits the same
+`ssh|peer|...` feature shape as `fanfp.py`. If a server only provides a banner,
+the algorithm-list fields are emitted empty, matching passive extraction.
+
 Local NSE testing against OpenSSL servers:
 
 ```bash
 test/nse-openssl.sh
+test/nse-ssh.py
 ```
 
 The test harness creates a temporary certificate, starts `openssl s_server` for
@@ -165,7 +172,8 @@ The test harness creates a temporary certificate, starts `openssl s_server` for
 each server, verifies default scan stops at the first successful TLS version,
 and prints the observed `features` and `fingerprint` values. `SSLv3` and
 `SSLv2` are reported as skipped when the local OpenSSL build no longer provides
-those server modes.
+those server modes. The SSH harness starts a deterministic local SSH test
+server and validates `fanything-ssh.nse`.
 
 ## MISP correlation hints
 

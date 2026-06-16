@@ -10,11 +10,11 @@ local table = require "table"
 local tls = require "tls"
 
 description = [[
-Extracts FAN/1 fingerprints from live SSH and TLS services.
+Extracts FAN/1 fingerprints from live TLS services.
 
 The output mirrors fanfp.py fields: mode, protocol, role, fingerprint, features,
-sha256, and flow. TLS probes run TLSv1.3, TLSv1.2, TLSv1.1, TLSv1.0, SSLv3,
-then SSLv2, stopping at the first full server fingerprint.
+sha256, and flow. Probes run TLSv1.3, TLSv1.2, TLSv1.1, TLSv1.0, SSLv3, then
+SSLv2, stopping at the first full server fingerprint.
 ]]
 
 ---
@@ -23,12 +23,12 @@ then SSLv2, stopping at the first full server fingerprint.
 --
 -- @output
 -- PORT    STATE SERVICE
--- 22/tcp  open  ssh
--- | fanything:
--- |   protocol: ssh
--- |   role: peer
--- |   fingerprint: fan1:ssh:peer:active:...
--- |   features: ssh|peer|id=OpenSSH_9.6|kex=...
+-- 443/tcp open  https
+-- | fanything-tls:
+-- |   protocol: tls
+-- |   role: server
+-- |   fingerprint: fan1:tls:server:active:...
+-- |   features: tls|server|v=771|c=4865|e=43-51|sv=772
 -- |   sha256: ...
 -- |   flow:
 -- |     src: 192.0.2.10
@@ -54,8 +54,8 @@ portrule = function(host, port)
   if stdnse.get_script_args(SCRIPT_NAME .. ".force") then
     return true
   end
-  return shortport.port_or_service({22, 443, 465, 636, 853, 993, 995, 8443, 9443},
-    {"ssh", "ssl", "https", "imaps", "pop3s", "smtps", "ldaps"}, "tcp", "open")(host, port)
+  return shortport.port_or_service({443, 465, 636, 853, 993, 995, 8443, 9443},
+    {"ssl", "https", "imaps", "pop3s", "smtps", "ldaps"}, "tcp", "open")(host, port)
     or sslcert.getPrepareTLSWithoutReconnect(port) ~= nil
 end
 
@@ -375,71 +375,6 @@ local function get_sslv2_features(host, port)
   return ("tls|server|v=2|c=%s|e=|sv="):format(table.concat(ciphers, "-")), flow
 end
 
-local function ssh_name_list(packet, i)
-  local len = packet:byte(i) * 16777216 + packet:byte(i + 1) * 65536 + packet:byte(i + 2) * 256 + packet:byte(i + 3)
-  i = i + 4
-  if i + len - 1 > #packet then return nil end
-  return packet:sub(i, i + len - 1), i + len
-end
-
-local function parse_ssh_kexinit(packet)
-  if #packet < 18 or packet:byte(1) ~= 20 then return nil end
-  local i = 18
-  local names = {
-    "kex", "hostkey", "enc_c2s", "enc_s2c", "mac_c2s", "mac_s2c",
-    "comp_c2s", "comp_s2c", "lang_c2s", "lang_s2c"
-  }
-  local values = {}
-  for _, name in ipairs(names) do
-    values[name], i = ssh_name_list(packet, i)
-    if not values[name] then return nil end
-  end
-  values.follows = i <= #packet and (packet:byte(i) ~= 0 and "True" or "False") or ""
-  return values
-end
-
-local function ssh_packet_payload(raw)
-  if #raw < 6 then return nil end
-  local packet_len = raw:byte(1) * 16777216 + raw:byte(2) * 65536 + raw:byte(3) * 256 + raw:byte(4)
-  local pad_len = raw:byte(5)
-  if packet_len + 4 > #raw or packet_len <= pad_len + 1 then return nil end
-  return raw:sub(6, 4 + packet_len - pad_len)
-end
-
-local function get_ssh_features(host, port)
-  local sock = nmap.new_socket()
-  sock:set_timeout(timeout())
-  if not sock:connect(host, port) then return nil end
-  local flow = socket_flow(sock, host, port)
-  sock:send("SSH-2.0-Nmap-FANFP\r\n")
-  local ok, line = sock:receive_lines(1)
-  if not ok then sock:close(); return nil end
-
-  local banner = line:match("^(SSH%-[^\r\n]+)")
-  if not banner then sock:close(); return nil end
-  local software = banner:match("^SSH%-%S+%-(.+)$") or banner
-
-  ok, data = sock:receive_buf(function(buf)
-    if #buf < 4 then return nil end
-    local len = buf:byte(1) * 16777216 + buf:byte(2) * 65536 + buf:byte(3) * 256 + buf:byte(4)
-    if #buf < len + 4 then return nil end
-    return len + 4, len + 4
-  end, true)
-  sock:close()
-  if not ok then return nil end
-  local payload = ssh_packet_payload(data)
-
-  local k = parse_ssh_kexinit(payload)
-  if not k then return nil end
-  local features = ("ssh|peer|id=%s|kex=%s|hostkey=%s|enc_c2s=%s|enc_s2c=%s"
-      .. "|mac_c2s=%s|mac_s2c=%s|comp_c2s=%s|comp_s2c=%s"
-      .. "|lang_c2s=%s|lang_s2c=%s|follows=%s"):format(
-      software, k.kex, k.hostkey, k.enc_c2s, k.enc_s2c,
-      k.mac_c2s, k.mac_s2c, k.comp_c2s, k.comp_s2c,
-      k.lang_c2s, k.lang_s2c, k.follows)
-  return features, flow
-end
-
 local function result(protocol, role, features, flow)
   local mode = "active"
   local fingerprint, digest = fan1(protocol, role, mode, features)
@@ -455,42 +390,22 @@ local function result(protocol, role, features, flow)
 end
 
 action = function(host, port)
-  local results = {}
-  local seen = {}
-
-  local function add_result(protocol, role, features, fp_flow)
-    local item = result(protocol, role, features, fp_flow)
-    if not seen[item.fingerprint] then
-      results[#results + 1] = item
-      seen[item.fingerprint] = true
-    end
-  end
-
-  if port.service == "ssh" or port.number == 22 then
-    local features, fp_flow = get_ssh_features(host, port)
-    if features then add_result("ssh", "peer", features, fp_flow) end
-  end
-
   for _, version in ipairs(tls_versions()) do
     if version == "SSLv2" then
       local features, fp_flow = get_sslv2_features(host, port)
       if features then
-        add_result("tls", "server", features, fp_flow)
-        break
+        return result("tls", "server", features, fp_flow)
       end
     else
       local response, fp_flow = get_tls_response(host, port, version)
       if response then
         local features = tls_server_features_from_raw(response)
         if features then
-          add_result("tls", "server", features, fp_flow)
-          break
+          return result("tls", "server", features, fp_flow)
         end
       end
     end
   end
 
-  if #results == 0 then return nil end
-  if #results == 1 then return results[1] end
-  return results
+  return nil
 end
