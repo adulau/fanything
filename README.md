@@ -195,6 +195,11 @@ test/nse-ssh.py
 test/fanfp-quic.sh
 ```
 
+Local QUIC fixture test:
+
+```bash
+test/fanfp-quic.sh
+```
 The test harness creates a temporary certificate, starts `openssl s_server` for
 `TLSv1.3`, `TLSv1.2`, `TLSv1.1`, and `TLSv1.0`, runs `fanything-tls.nse` against
 each server, verifies default scan stops at the first successful TLS version,
