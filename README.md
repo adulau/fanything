@@ -178,6 +178,10 @@ python3 fanfp.py capture.pcap
 python3 fanfp.py test/chromium-perdu.com-quick.pcap
 ```
 
+Malformed TLS records are skipped by default so one truncated frame does not stop
+processing the rest of the capture. Use `--strict` to raise parsing errors, or
+`--verbose-errors` to print skipped malformed record details to stderr.
+
 The command emits one JSON object per fingerprint:
 
 ```json

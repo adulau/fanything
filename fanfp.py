@@ -10,9 +10,10 @@ import hmac
 import ipaddress
 import json
 import struct
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Tuple, Union
+from typing import Callable, Dict, Iterable, Iterator, List, Optional, Tuple, Union
 
 try:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -288,22 +289,35 @@ def read_vec(data: bytes, offset: int, length_size: int) -> Tuple[bytes, int]:
     return data[offset : offset + length], offset + length
 
 
-def parse_tls_handshake(payload: bytes) -> Optional[Tuple[str, str]]:
+def parse_tls_handshake(payload: bytes, strict: bool = False) -> Optional[Tuple[str, str]]:
     offset = 0
     while offset + 5 <= len(payload):
         content_type = payload[offset]
         rec_len = struct.unpack_from("!H", payload, offset + 3)[0]
+        if offset + 5 + rec_len > len(payload):
+            if strict:
+                raise ValueError("truncated TLS record")
+            return None
         record = payload[offset + 5 : offset + 5 + rec_len]
         offset += 5 + rec_len
         if content_type != TLS_HANDSHAKE or len(record) < 4:
             continue
         hs_type = record[0]
         hs_len = int.from_bytes(record[1:4], "big")
+        if 4 + hs_len > len(record):
+            if strict:
+                raise ValueError("truncated TLS handshake")
+            return None
         body = record[4 : 4 + hs_len]
-        if hs_type == TLS_CLIENT_HELLO:
-            return "client", tls_client_features(body)
-        if hs_type == TLS_SERVER_HELLO:
-            return "server", tls_server_features(body)
+        try:
+            if hs_type == TLS_CLIENT_HELLO:
+                return "client", tls_client_features(body)
+            if hs_type == TLS_SERVER_HELLO:
+                return "server", tls_server_features(body)
+        except (struct.error, ValueError):
+            if strict:
+                raise
+            return None
     return None
 
 
@@ -701,13 +715,26 @@ def emit(protocol: str, role: str, features: str, segment: Union[TcpSegment, Udp
     }
 
 
-def extract(path: Path) -> Iterator[Dict[str, object]]:
+def extract(
+    path: Path,
+    error_handler: Optional[Callable[[str, Exception], None]] = None,
+    strict: bool = False,
+) -> Iterator[Dict[str, object]]:
     seen = set()
     ssh_banners: Dict[Tuple[str, int, str, int], Tuple[str, TcpSegment]] = {}
     ssh_completed = set()
     for segment in tcp_segments(read_pcap(path)):
         candidates = []
-        tls = parse_tls_handshake(segment.payload)
+        try:
+            tls = parse_tls_handshake(segment.payload, strict=True)
+        except (struct.error, ValueError) as exc:
+            if strict and not error_handler:
+                raise
+            if error_handler:
+                error_handler(
+                    f"skipping malformed TLS record in frame {segment.index}", exc
+                )
+            tls = None
         if tls:
             candidates.append(("tls", *tls))
 
@@ -751,8 +778,25 @@ def extract(path: Path) -> Iterator[Dict[str, object]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("pcap", type=Path, help="pcap or pcapng capture file")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="raise parsing errors instead of skipping malformed records",
+    )
+    parser.add_argument(
+        "--verbose-errors",
+        action="store_true",
+        help="print skipped malformed record details to stderr",
+    )
     args = parser.parse_args()
-    for item in extract(args.pcap):
+
+    def report_error(message: str, exc: Exception) -> None:
+        if args.strict:
+            raise exc
+        if args.verbose_errors:
+            print(f"{message}: {exc}", file=sys.stderr)
+
+    for item in extract(args.pcap, report_error, strict=args.strict):
         print(json.dumps(item, sort_keys=True))
     return 0
 
