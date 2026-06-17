@@ -188,6 +188,22 @@ The command emits one JSON object per fingerprint:
 {"mode":"passive","protocol":"tls","role":"client","fingerprint":"fan1:tls:client:passive:...:sha256:...","fingerprint_simhash128":"fan1:tls:client:passive:...:simhash128:...","features":"tls|client|...","sha256":"...","simhash128":"...","flow":{"src":"192.0.2.10","sport":51514,"dst":"198.51.100.20","dport":443}}
 ```
 
+Cluster similar observations by SimHash distance:
+
+```bash
+python3 fanfp.py capture.pcap > fanfp.jsonl
+python3 fanfp_cluster.py fanfp.jsonl
+python3 fanfp_cluster.py --threshold 8 --format json fanfp.jsonl
+```
+
+`fanfp_cluster.py` reads either JSON Lines, a single JSON object, or a JSON
+array from a file or stdin. It compares the `simhash128` values with Hamming
+distance, groups records at or below the threshold, and prints the matching
+flow pairs so analysts can see which observed flows are close to each other.
+The default threshold is `12` bits out of 128. By default, comparisons are kept
+within the same `protocol`, `role`, and `mode`; use `--cross-roles` if you want
+to compare every record against every other record.
+
 Active service probing with Nmap NSE:
 
 ```bash
