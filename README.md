@@ -6,9 +6,9 @@
 <img width="200" height="239" alt="f" src="https://github.com/user-attachments/assets/e2e096fd-1ae5-4090-92b8-1e0a2fe85a4a" />
 
 
-`fanything` is an experimental, patent-unencumbered fingerprinting format for correlating SSH, TLS, QUIC handshakes and more.
+`fanything` is an awesome, patent-unencumbered fingerprinting format for correlating SSH, TLS, QUIC handshakes and more.
 
-The repository defines a small algorithm named **FAN/1** (Flexible Active
+The repository defines an algorithm named **FAN/1** (Flexible Anything
 Network fingerprint, version 1). FAN/1 is intentionally simple: each
 fingerprint starts with an explicit namespace, keeps a readable normalized
 feature string for analysts, and appends a stable SHA-256 digest for indexing in
