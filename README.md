@@ -196,9 +196,9 @@ python3 fanfp_cluster.py fanfp.jsonl
 python3 fanfp_cluster.py --threshold 8 --format json fanfp.jsonl
 ```
 
-`fanfp_cluster.py` reads either JSON Lines, a single JSON object, or a JSON
-array from a file or stdin. It compares the `simhash128` values with Hamming
-distance, groups records at or below the threshold, and prints the matching
+`fanfp_cluster.py` reads JSON Lines, concatenated JSON objects, a single JSON
+object, or a JSON array from a file or stdin. It compares the `simhash128`
+values with Hamming distance, groups records at or below the threshold, and prints the matching
 flow pairs so analysts can see which observed flows are close to each other.
 The default threshold is `12` bits out of 128. By default, comparisons are kept
 within the same `protocol`, `role`, and `mode`; use `--cross-roles` if you want

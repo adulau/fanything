@@ -65,31 +65,34 @@ def iter_json_values(handle: TextIO) -> Iterator[Dict[str, Any]]:
     text = handle.read().strip()
     if not text:
         return
-    try:
-        value = json.loads(text)
-    except json.JSONDecodeError:
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                item = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"invalid JSON on line {line_number}: {exc}") from exc
-            if not isinstance(item, dict):
-                raise ValueError(f"JSON value on line {line_number} is not an object")
-            yield item
-        return
 
-    if isinstance(value, list):
-        for position, item in enumerate(value, start=1):
-            if not isinstance(item, dict):
-                raise ValueError(f"JSON array item {position} is not an object")
-            yield item
-    elif isinstance(value, dict):
-        yield value
-    else:
-        raise ValueError("input must be JSON object lines, one JSON object, or a JSON array")
+    decoder = json.JSONDecoder()
+    position = 0
+    value_count = 0
+
+    while position < len(text):
+        try:
+            value, position = decoder.raw_decode(text, position)
+        except json.JSONDecodeError as exc:
+            line_number = text.count("\n", 0, exc.pos) + 1
+            raise ValueError(f"invalid JSON on line {line_number}: {exc}") from exc
+
+        value_count += 1
+        if isinstance(value, list):
+            for item_position, item in enumerate(value, start=1):
+                if not isinstance(item, dict):
+                    raise ValueError(f"JSON array item {item_position} is not an object")
+                yield item
+        elif isinstance(value, dict):
+            yield value
+        else:
+            raise ValueError("input must be JSON object lines, JSON objects, one JSON object, or a JSON array")
+
+        while position < len(text) and text[position].isspace():
+            position += 1
+
+    if value_count == 0:
+        raise ValueError("input must contain at least one JSON value")
 
 
 def load_records(path: Optional[Path]) -> List[FingerprintRecord]:
