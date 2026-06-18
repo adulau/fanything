@@ -25,7 +25,7 @@ UDP/4500, then fingerprints the responder header and payload sequence.
 -- |   protocol: ike
 -- |   role: responder
 -- |   fingerprint: fan1:ike:responder:active:...
--- |   features: ike|responder|v=2.0|ex=34|flags=32|np=33|p=33-34-40-43-43-41-41-41-43|sa=1:1=20.256,2=5,4=19|ke=19|n=16388-16389-16430
+-- |   features: ike|responder|v=2.0|ex=34|flags=32|np=33|p=33-34-40|sa=1:1=12.256,2=5,3=12,4=14|ke=14|n=
 -- |   sha256: ...
 -- |   flow:
 -- |     src: 192.0.2.10
@@ -44,7 +44,6 @@ categories = {"discovery", "safe"}
 local IKEV2_SA = 33
 local IKEV2_KE = 34
 local IKEV2_NONCE = 40
-local IKEV2_VENDOR_ID = 43
 local IKEV2_NOTIFY = 41
 local IKEV2_IKE_SA_INIT = 34
 local IKEV2_INITIATOR = 0x08
@@ -125,36 +124,52 @@ local function key_length_attr(bits)
   return string.pack(">I2I2", 0x800e, bits)
 end
 
-local function build_sa_body()
-  local transforms = table.concat({
-    transform(3, 1, 20, key_length_attr(256)),
-    transform(3, 2, 5),
-    transform(0, 4, 19),
-  })
+local function proposal(next_type, proposal_num, transforms, transform_count)
   local proposal_len = 8 + #transforms
-  return string.char(0, 0) .. string.pack(">I2BBBB", proposal_len, 1, 1, 0, 3) .. transforms
+  return string.char(next_type, 0) .. string.pack(">I2BBBB", proposal_len, proposal_num, 1, 0, transform_count) .. transforms
 end
 
-local function vendor_id_body(value)
-  return value
+local function transforms(items)
+  local out = {}
+  for i, item in ipairs(items) do
+    local next_type = i < #items and 3 or 0
+    out[#out + 1] = transform(next_type, item[1], item[2], item[3])
+  end
+  return table.concat(out)
 end
 
-local function notify_body(notify_type)
-  return string.pack(">BBI2", 0, 0, notify_type)
+local function build_sa_body()
+  local proposals = {
+    proposal(2, 1, transforms({
+      {1, 12, key_length_attr(256)}, -- AES-CBC-256
+      {2, 5},                        -- PRF_HMAC_SHA2_256
+      {3, 12},                       -- AUTH_HMAC_SHA2_256_128
+      {4, 14},                       -- MODP 2048
+    }), 4),
+    proposal(2, 2, transforms({
+      {1, 12, key_length_attr(128)}, -- AES-CBC-128
+      {2, 2},                        -- PRF_HMAC_SHA1
+      {3, 2},                        -- AUTH_HMAC_SHA1_96
+      {4, 14},                       -- MODP 2048
+    }), 4),
+    proposal(0, 3, transforms({
+      {1, 20, key_length_attr(256)}, -- AES-GCM-16-256
+      {2, 5},                        -- PRF_HMAC_SHA2_256
+      {4, 14},                       -- MODP 2048
+    }), 3),
+  }
+  return table.concat(proposals)
+end
+
+local function build_ke_body()
+  return string.pack(">I2I2", 14, 0) .. string.rep("\0", 255) .. "\4"
 end
 
 local function build_probe(spi)
   local sa = payload(IKEV2_KE, build_sa_body())
-  local ke_body = string.pack(">I2I2", 19, 0) .. string.rep("\0", 255) .. "\4"
-  local ke = payload(IKEV2_NONCE, ke_body)
-  local nonce = payload(IKEV2_VENDOR_ID, rand.random_string(32))
-  local vendor1 = payload(IKEV2_VENDOR_ID, vendor_id_body("FANFP-IKEV2-PROBE-1"))
-  local vendor2 = payload(IKEV2_NOTIFY, vendor_id_body("FANFP-IKEV2-PROBE-2"))
-  local notify1 = payload(IKEV2_NOTIFY, notify_body(16388))
-  local notify2 = payload(IKEV2_NOTIFY, notify_body(16389))
-  local notify3 = payload(IKEV2_VENDOR_ID, notify_body(16430))
-  local vendor3 = payload(0, vendor_id_body("FANFP-IKEV2-PROBE-3"))
-  local body = sa .. ke .. nonce .. vendor1 .. vendor2 .. notify1 .. notify2 .. notify3 .. vendor3
+  local ke = payload(IKEV2_NONCE, build_ke_body())
+  local nonce = payload(0, rand.random_string(32))
+  local body = sa .. ke .. nonce
   local len = 28 + #body
   return spi .. string.rep("\0", 8) .. string.char(IKEV2_SA, 0x20, IKEV2_IKE_SA_INIT, IKEV2_INITIATOR)
       .. string.pack(">I4I4", 0, len) .. body
@@ -236,6 +251,14 @@ local function parse_response(packet)
 
     next_payload = this_next
     offset = offset + payload_len
+  end
+
+  if #payloads == 1 and payloads[1] == tostring(IKEV2_NOTIFY) then
+    for _, notify_type in ipairs(notify_types) do
+      if notify_type == "7" or notify_type == "14" then
+        return nil
+      end
+    end
   end
 
   return ("ike|responder|v=%d.%d|ex=%d|flags=%d|np=%d|p=%s|sa=%s|ke=%s|n=%s"):format(
