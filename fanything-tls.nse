@@ -63,15 +63,17 @@ local function timeout()
   return tonumber(stdnse.get_script_args(SCRIPT_NAME .. ".timeout")) or 5000
 end
 
--- TLS 1.3 cipher order derived from Firefox ESR 140 / NSS:
--- security/nss/lib/ssl/sslenum.c in the esr140 branch. The script keeps a
--- protocol-named table; Firefox is only the source reference for the order.
+-- TLS 1.3 cipher order derived from the current Firefox LTS/ESR 140 branch
+-- (latest ESR point release documented by Mozilla as 140.12.0 when checked on
+-- 2026-06-18) and NSS SSL_ImplementedCiphers[] in mozilla-esr140.
+-- The script keeps a protocol-named table; Firefox is only the source
+-- reference for the order.
 local TLS13_CIPHERS = {
   "TLS_AKE_WITH_AES_128_GCM_SHA256",
   "TLS_AKE_WITH_CHACHA20_POLY1305_SHA256",
   "TLS_AKE_WITH_AES_256_GCM_SHA384",
 }
--- TLS 1.2 cipher order derived from Firefox ESR 140 / NSS enabled
+-- TLS 1.2 cipher order derived from the same Firefox ESR 140 / NSS enabled
 -- security.ssl3.* prefs and SSL_ImplementedCiphers[] order.
 local TLS12_CIPHERS = {
   "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",

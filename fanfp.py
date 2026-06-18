@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract FAN/1 SSH, TLS, X.509, QUIC, IKE, and TCP/IP fingerprints from captures."""
+"""Extract FAN/1 SSH, TLS, DTLS, X.509, QUIC, IKE, and TCP/IP fingerprints from captures."""
 
 from __future__ import annotations
 
@@ -667,9 +667,9 @@ def parse_tls_handshake(payload: bytes, strict: bool = False) -> List[Tuple[str,
         body = record[4 : 4 + hs_len]
         try:
             if hs_type == TLS_CLIENT_HELLO:
-                results.append(("client", tls_client_features(body)))
+                results.append(("client", tls_client_features(body, "tls")))
             elif hs_type == TLS_SERVER_HELLO:
-                results.append(("server", tls_server_features(body)))
+                results.append(("server", tls_server_features(body, "tls")))
             elif hs_type == TLS_CERTIFICATE:
                 results.extend(("server", features) for features in parse_tls_certificate_features(body))
         except (struct.error, ValueError):
@@ -679,10 +679,58 @@ def parse_tls_handshake(payload: bytes, strict: bool = False) -> List[Tuple[str,
     return results
 
 
-def tls_client_features(body: bytes) -> str:
+def parse_dtls_handshake(payload: bytes, strict: bool = False) -> Optional[Tuple[str, str]]:
+    offset = 0
+    while offset + 13 <= len(payload):
+        content_type = payload[offset]
+        version = struct.unpack_from("!H", payload, offset + 1)[0]
+        if content_type not in (20, 21, 22, 23, 24, 25, 26):
+            return None
+        if (version & 0xFF00) != 0xFE00:
+            return None
+        rec_len = struct.unpack_from("!H", payload, offset + 11)[0]
+        if offset + 13 + rec_len > len(payload):
+            if strict:
+                raise ValueError("truncated DTLS record")
+            return None
+        record = payload[offset + 13 : offset + 13 + rec_len]
+        offset += 13 + rec_len
+        if content_type != TLS_HANDSHAKE:
+            continue
+
+        hs_offset = 0
+        while hs_offset + 12 <= len(record):
+            hs_type = record[hs_offset]
+            hs_len = int.from_bytes(record[hs_offset + 1 : hs_offset + 4], "big")
+            fragment_offset = int.from_bytes(record[hs_offset + 6 : hs_offset + 9], "big")
+            fragment_len = int.from_bytes(record[hs_offset + 9 : hs_offset + 12], "big")
+            hs_offset += 12
+            if hs_offset + fragment_len > len(record):
+                if strict:
+                    raise ValueError("truncated DTLS handshake")
+                return None
+            fragment = record[hs_offset : hs_offset + fragment_len]
+            hs_offset += fragment_len
+            if fragment_offset != 0 or fragment_len != hs_len:
+                continue
+            try:
+                if hs_type == TLS_CLIENT_HELLO:
+                    return "client", tls_client_features(fragment, "dtls")
+                if hs_type == TLS_SERVER_HELLO:
+                    return "server", tls_server_features(fragment, "dtls")
+            except (struct.error, ValueError):
+                if strict:
+                    raise
+                return None
+    return None
+
+
+def tls_client_features(body: bytes, protocol: str = "tls") -> str:
     off = 0
     version = struct.unpack_from("!H", body, off)[0]; off += 2 + 32
     session, off = read_vec(body, off, 1)
+    if protocol == "dtls":
+        _, off = read_vec(body, off, 1)
     ciphers, off = read_vec(body, off, 2)
     comp, off = read_vec(body, off, 1)
     exts = groups = points = versions = sigs = ""
@@ -710,10 +758,10 @@ def tls_client_features(body: bytes) -> str:
                 alpn = ",".join(names)
             elif et == 13 and len(ed) >= 2:
                 sigs = join_ints(u16s(ed[2:]))
-    return f"tls|client|v={version}|c={join_ints(u16s(ciphers))}|e={join_ints(ext_types)}|g={groups}|p={points}|sv={versions}|alpn={alpn}|sig={sigs}"
+    return f"{protocol}|client|v={version}|c={join_ints(u16s(ciphers))}|e={join_ints(ext_types)}|g={groups}|p={points}|sv={versions}|alpn={alpn}|sig={sigs}"
 
 
-def tls_server_features(body: bytes) -> str:
+def tls_server_features(body: bytes, protocol: str = "tls") -> str:
     off = 0
     version = struct.unpack_from("!H", body, off)[0]; off += 2 + 32
     _, off = read_vec(body, off, 1)
@@ -730,7 +778,7 @@ def tls_server_features(body: bytes) -> str:
                 ext_types.append(et)
             if et == 43 and len(ed) == 2:
                 selected_version = str(struct.unpack("!H", ed)[0])
-    return f"tls|server|v={version}|c={cipher}|e={join_ints(ext_types)}|sv={selected_version}"
+    return f"{protocol}|server|v={version}|c={cipher}|e={join_ints(ext_types)}|sv={selected_version}"
 
 
 def read_quic_varint(data: bytes, offset: int) -> Tuple[int, int, int]:
@@ -1229,6 +1277,25 @@ def extract(
             if key not in seen:
                 seen.add(key)
                 yield emit("ssh", "peer", features, segment)
+
+    for datagram in udp_datagrams(read_pcap(path)):
+        try:
+            dtls = parse_dtls_handshake(datagram.payload, strict=strict)
+        except (struct.error, ValueError) as exc:
+            if strict and not error_handler:
+                raise
+            if error_handler:
+                error_handler(
+                    f"skipping malformed DTLS record in frame {datagram.index}", exc
+                )
+            dtls = None
+        if not dtls:
+            continue
+        role, features = dtls
+        key = ("dtls", role, features, tuple(datagram.flow.items()))
+        if key not in seen:
+            seen.add(key)
+            yield emit("dtls", role, features, datagram)
 
     for protocol, role, features, datagram in quic_candidates(read_pcap(path)):
         key = (protocol, role, features, tuple(datagram.flow.items()))
