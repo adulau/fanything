@@ -113,12 +113,19 @@ fanything-ike.force=true
 
 ## Active Request Order
 
-The active request payload order is strict:
+The active request payload order is strict and mirrors the passive
+`IKE_SA_INIT` fixture shape used as probe reference:
 
 ```text
 1. SA      payload type 33
 2. KE      payload type 34
 3. Nonce   payload type 40
+4. VID     payload type 43
+5. VID     payload type 43
+6. Notify  payload type 41, notify type 16388
+7. Notify  payload type 41, notify type 16389
+8. Notify  payload type 41, notify type 16430
+9. VID     payload type 43
 ```
 
 The SA proposal is deterministic:
@@ -127,19 +134,26 @@ The SA proposal is deterministic:
 proposal number: 1
 protocol ID: 1
 SPI size: 0
-transform count: 4
+transform count: 3
 
-1. transform type 1, transform ID 12, key length 256
+1. transform type 1, transform ID 20, key length 256
 2. transform type 2, transform ID 5
-3. transform type 3, transform ID 12
-4. transform type 4, transform ID 14
+3. transform type 4, transform ID 19
 ```
 
 Canonical active probe SA string:
 
 ```text
-sa=1:1=12.256,2=5,3=12,4=14
+sa=1:1=20.256,2=5,4=19
 ```
 
-The KE payload uses group `14` and a deterministic-length public value made of
+The KE payload uses group `19` and a deterministic-length public value made of
 255 zero bytes followed by byte `04`. The Nonce payload is 32 random bytes.
+Vendor ID payload content is fixed probe text; fingerprinting records only the
+payload type sequence, not Vendor ID bytes.
+
+Canonical active initiator probe shape:
+
+```text
+ike|initiator|v=2.0|ex=34|flags=8|np=33|p=33-34-40-43-43-41-41-41-43|sa=1:1=20.256,2=5,4=19|ke=19|n=16388-16389-16430
+```
