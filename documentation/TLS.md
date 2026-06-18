@@ -65,6 +65,11 @@ Reference: [RFC 8701](https://www.rfc-editor.org/rfc/rfc8701.html).
 ## Active Request Defaults
 
 `fanything-tls.nse` actively probes servers and emits `tls|server|...`.
+TLS 1.3 and TLS 1.2 active cipher lists are pinned to the current Firefox
+LTS/ESR baseline used by this project: Firefox ESR 140 series, latest listed
+ESR point release `140.12.0` when checked on 2026-06-18, using NSS
+`SSL_ImplementedCiphers[]` order from `mozilla-esr140`. DTLS active probing
+uses the same modern TLS-family cipher baseline.
 
 Default protocol order:
 

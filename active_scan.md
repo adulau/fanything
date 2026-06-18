@@ -33,8 +33,11 @@ full compatibility matrix.
 
 ## Source References
 
-The script names cipher tables by protocol version. Firefox/NSS references are
-used only to choose and document cipher-suite order:
+The scripts name cipher tables by protocol version. Firefox/NSS references are
+used only to choose and document cipher-suite order. As of 2026-06-18, the
+latest Firefox LTS/ESR baseline used here is the Firefox ESR 140 series:
+Mozilla's release list includes the current ESR point release `140.12.0`, and
+the source branch is `mozilla-esr140`.
 
 * TLS 1.3 and TLS 1.2 use Firefox ESR 140 source as the modern NSS reference:
   * `security.tls.version.min = 3` means minimum TLS 1.2.
@@ -43,15 +46,22 @@ used only to choose and document cipher-suite order:
   * Enabled `security.ssl3.*` prefs define which TLS 1.2 and below suites are
     enabled.
   * NSS `SSL_ImplementedCiphers[]` defines the cipher-suite ordering.
+* DTLS 1.3 and DTLS 1.2 active probes use the same Firefox ESR 140 / NSS cipher
+  ordering as the TLS active probes. DTLS 1.3 sends the TLS 1.3 suites first,
+  then the TLS 1.2 compatibility list.
 * TLS 1.1, TLS 1.0, and SSLv3 use Firefox 33-era source as the historical NSS
   reference.
 
 References:
 
+* Firefox release list, latest ESR point release:
+  https://www.firefox.com/en-US/releases/
+* Firefox ESR 140.0esr release notes:
+  https://www.firefox.com/en-US/firefox/140.0esr/releasenotes/
 * Firefox ESR 140 prefs:
-  https://raw.githubusercontent.com/mozilla-firefox/firefox/esr140/modules/libpref/init/StaticPrefList.yaml
+  https://hg.mozilla.org/releases/mozilla-esr140/raw-file/tip/modules/libpref/init/StaticPrefList.yaml
 * NSS cipher-suite order:
-  https://raw.githubusercontent.com/mozilla-firefox/firefox/esr140/security/nss/lib/ssl/sslenum.c
+  https://hg.mozilla.org/releases/mozilla-esr140/raw-file/tip/security/nss/lib/ssl/sslenum.c
 * Firefox 34 release notes, SSLv3 disabled:
   https://www.mozilla.org/en-US/firefox/34.0/releasenotes/
 * Mozilla Security Blog, POODLE and SSLv3 shutdown plan:
@@ -70,7 +80,9 @@ reference.
 ## TLS 1.3
 
 Firefox ESR 140 allows TLS 1.3 and NSS orders the TLS 1.3 suites as follows.
-Nmap's TLS library uses `TLS_AKE_*` names for TLS 1.3 suites.
+DTLS 1.3 active probing uses the same three TLS 1.3 suite values before the TLS
+1.2 compatibility list. Nmap's TLS library uses `TLS_AKE_*` names for TLS 1.3
+suites.
 
 | Order | IANA cipher suite | Nmap name | Value |
 | --- | --- | --- | --- |

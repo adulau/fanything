@@ -6,7 +6,7 @@
 <img width="200" height="239" alt="f" src="https://github.com/user-attachments/assets/e2e096fd-1ae5-4090-92b8-1e0a2fe85a4a" />
 
 
-`fanything` is an awesome, patent-unencumbered fingerprinting format for correlating SSH, TLS, X.509 certificate, QUIC, IKE, and TCP/IP stack behavior.
+`fanything` is an awesome, patent-unencumbered fingerprinting format for correlating SSH, TLS, DTLS, X.509 certificate, QUIC, IKE, and TCP/IP stack behavior.
 
 The repository defines an algorithm named **FAN/1** (Flexible Anything
 Network fingerprint, version 1). FAN/1 is intentionally simple: each
@@ -24,7 +24,7 @@ fan1:<protocol>:<role>:<mode>:<base64url-normalized-features>:<digest-algorithm>
 ```
 
 * `fan1` identifies the algorithm version.
-* `<protocol>` is currently `tls`, `x509`, `ssh`, `quic`, `ike`, or `tcpip`, but the
+* `<protocol>` is currently `tls`, `dtls`, `x509`, `ssh`, `quic`, `ike`, or `tcpip`, but the
   namespace can be extended to other services and transport behaviors.
 * `<role>` identifies handshake direction, for example `client`, `server`, or
   `peer`.
@@ -65,9 +65,10 @@ FAN/1 fingerprints can be collected in two modes:
   `fanfp.py` is passive and emits `"mode":"passive"` in each JSON object and
   in each FAN/1 fingerprint prefix.
 * `active` means the collector creates its own network interaction with the
-  endpoint. The NSE scripts `fanything-tls.nse` and `fanything-ssh.nse` are
-  active: they connect to the target, send protocol probes, emit `mode: active`
-  in Nmap output, and embed `active` in each FAN/1 fingerprint prefix.
+  endpoint. The NSE scripts `fanything-tls.nse`, `fanything-dtls.nse`, and
+  `fanything-ssh.nse` are active: they connect to the target, send protocol
+  probes, emit `mode: active` in Nmap output, and embed `active` in each FAN/1
+  fingerprint prefix.
 
 The collection mode is part of the FAN/1 prefix and output metadata, but not the
 normalized feature string. Store `mode` as metadata too, so active probes and
@@ -81,14 +82,14 @@ collisions between values that may have similar feature lists but very different
 correlation meaning.
 
 * `client` is used when the observed handshake message is an initiator proposal.
-  For TLS this means the ClientHello: supported protocol versions, cipher suite
-  order, extension order, supported groups, signature algorithms, and ALPN
-  values. A `client` fingerprint answers: "what implementation or tool appears
-  to be initiating connections?"
+  For TLS and DTLS this means the ClientHello: supported protocol versions,
+  cipher suite order, extension order, supported groups, signature algorithms,
+  and ALPN values. A `client` fingerprint answers: "what implementation or tool
+  appears to be initiating connections?"
 * `server` is used when the observed handshake message is a responder selection.
-  For TLS this means the ServerHello: selected protocol version, selected cipher
-  suite, and server extensions. A `server` fingerprint answers: "what service
-  behavior appears to be answering connections?"
+  For TLS and DTLS this means the ServerHello: selected protocol version,
+  selected cipher suite, and server extensions. A `server` fingerprint answers:
+  "what service behavior appears to be answering connections?"
 * `peer` is used when the protocol exposes comparable active-handshake
   characteristics from both sides, or when the extractor cannot reliably assign
   a stricter initiator/responder label from a single payload. SSH uses `peer`
@@ -129,8 +130,6 @@ Normalization rules:
 * Lists preserve wire order because order is often behaviorally meaningful.
 * GREASE values are removed from TLS lists before canonicalization.
 * Missing fields are represented as empty strings.
-
-
 
 ### X.509 certificate fingerprints
 
@@ -198,6 +197,22 @@ Normalization rules:
 
 See [documentation/TCPIP.md](documentation/TCPIP.md) for the complete TCP/IP
 stack fingerprint field reference.
+
+### DTLS fingerprints
+
+DTLS fingerprints use the same TLS-family field shape under the `dtls`
+namespace. DTLS runs over UDP and its ClientHello has a cookie field; FAN/1
+parses the cookie for protocol handling but does not include it in the
+canonical feature string.
+
+```text
+dtls|client|v=<dtls_version>|c=<cipher_suites>|e=<extensions>|g=<supported_groups>|p=<ec_point_formats>|sv=<supported_versions>|alpn=<alpn_protocols>|sig=<signature_algorithms>
+dtls|server|v=<dtls_version>|c=<selected_cipher>|e=<extensions>|sv=<selected_supported_version>
+```
+
+Passive DTLS fingerprints come from observed UDP datagrams. Active DTLS
+fingerprints come from `fanything-dtls.nse`, which sends a DTLS ClientHello and
+retries once when a server returns `HelloVerifyRequest`.
 
 ### SSH fingerprints
 
@@ -280,6 +295,7 @@ Active service probing with Nmap NSE:
 
 ```bash
 nmap -Pn -p443 --script ./fanything-tls.nse 192.0.2.20
+nmap -sU -p4433 --script ./fanything-dtls.nse 192.0.2.20
 nmap -Pn -p22 --script ./fanything-ssh.nse 192.0.2.20
 ```
 
@@ -293,7 +309,18 @@ nmap -Pn -p443 --script ./fanything-tls.nse --script-args fanything-tls.tls-vers
 
 Cipher tables are version-oriented in the script. See [active_scan.md](active_scan.md)
 for cipher-suite rationale and the Firefox/NSS source references used for TLS
-1.3, TLS 1.2, and historical SSLv3-era ordering.
+1.3, TLS 1.2, DTLS 1.3, DTLS 1.2, and historical SSLv3-era ordering. Modern
+TLS/DTLS active cipher lists are pinned to Firefox ESR 140 series
+(`140.12.0` listed when checked on 2026-06-18) and NSS
+`SSL_ImplementedCiphers[]` order from `mozilla-esr140`.
+
+The DTLS NSE script probes `DTLSv1.3`, `DTLSv1.2`, then `DTLSv1.0` over UDP and
+stops at the first full server fingerprint. A single DTLS version can be forced
+for testing:
+
+```bash
+nmap -sU -p4433 --script ./fanything-dtls.nse --script-args fanything-dtls.dtls-version=DTLSv1.3 192.0.2.20
+```
 
 The SSH NSE script sends an SSH identification string, reads the server
 identification string and `SSH_MSG_KEXINIT` when available, then emits the same
@@ -339,5 +366,5 @@ Recommended storage approaches:
   back to packets.
 
 Because FAN/1 embeds the protocol, role, and collection mode in the fingerprint,
-mixed SSH, TLS, QUIC, and future service fingerprints can share the same
-attribute namespace without losing type information.
+mixed SSH, TLS, DTLS, QUIC, IKE, and future service fingerprints can share the
+same attribute namespace without losing type information.
