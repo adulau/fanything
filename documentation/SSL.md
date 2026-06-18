@@ -60,6 +60,34 @@ when higher TLS versions fail, unless forced with `fanything-tls.tls-version`.
 | Output role | `server` |
 | Output mode | `active` |
 
+## Active Request Order
+
+SSL probes inherit the deterministic active scanner order. They are reached only
+after higher TLS probes fail unless forced with `fanything-tls.tls-version`.
+
+### SSLv3 ClientHello Cipher Order
+
+```text
+1. TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA 49162
+2. TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA 49161
+3. TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA   49171
+4. TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA   49172
+5. TLS_ECDHE_ECDSA_WITH_RC4_128_SHA     49159
+6. TLS_ECDHE_RSA_WITH_RC4_128_SHA       49169
+7. TLS_DHE_RSA_WITH_AES_128_CBC_SHA     51
+8. TLS_DHE_DSS_WITH_AES_128_CBC_SHA     50
+9. TLS_DHE_RSA_WITH_AES_256_CBC_SHA     57
+10. TLS_RSA_WITH_AES_128_CBC_SHA        47
+11. TLS_RSA_WITH_AES_256_CBC_SHA        53
+12. TLS_RSA_WITH_3DES_EDE_CBC_SHA       10
+13. TLS_RSA_WITH_RC4_128_SHA            5
+14. TLS_RSA_WITH_RC4_128_MD5            4
+```
+
+For SSLv3, the scanner still builds the shared legacy extension table in code,
+but SSLv3 servers generally do not return TLS extensions. The emitted `e=` and
+`sv=` fields are usually empty.
+
 Force SSL probes:
 
 ```text

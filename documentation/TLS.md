@@ -42,6 +42,24 @@ Empty fields are represented as empty strings.
 It preserves observed list order after GREASE removal. Because `e=` keeps wire
 order, clients that vary extension order produce different full fingerprints.
 
+## GREASE
+
+GREASE means Generate Random Extensions And Sustain Extensibility. It is a TLS
+mechanism where clients advertise reserved, intentionally unknown values so
+servers and middleboxes keep tolerating unknown protocol values. This prevents
+TLS extensibility from breaking when real new values appear later.
+
+GREASE values can appear in ClientHello fields such as cipher suites,
+extensions, supported groups, supported versions, signature algorithms, key
+share, and ALPN. Common value pattern: `0x0A0A`, `0x1A1A`, `0x2A2A`, up to
+`0xFAFA`.
+
+`fanfp.py` removes GREASE values before canonicalization where fields are parsed
+as numeric TLS lists. Reason: GREASE is deliberately variable and not useful as
+a stable implementation signal.
+
+Reference: [RFC 8701](https://www.rfc-editor.org/rfc/rfc8701.html).
+
 ## Active Request Defaults
 
 `fanything-tls.nse` actively probes servers and emits `tls|server|...`.
@@ -68,6 +86,126 @@ The scanner stops at the first full server fingerprint.
 | TLS 1.3 key share | X25519 base point |
 | Output role | `server` |
 | Output mode | `active` |
+
+## Active Request Order
+
+The active scanner uses strict, deterministic ordering. It does not randomize
+cipher suites, supported groups, ALPN, signature algorithms, or protocol probes.
+
+### Protocol Probe Order
+
+```text
+1. TLSv1.3
+2. TLSv1.2
+3. TLSv1.1
+4. TLSv1.0
+5. SSLv3
+6. SSLv2
+```
+
+### TLS 1.3 ClientHello Cipher Order
+
+For `TLSv1.3`, the scanner sends TLS 1.3 cipher suites first, then the TLS 1.2
+cipher list for compatibility.
+
+```text
+1. TLS_AES_128_GCM_SHA256                  4865
+2. TLS_CHACHA20_POLY1305_SHA256            4867
+3. TLS_AES_256_GCM_SHA384                  4866
+4. TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 49195
+5. TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256   49199
+6. TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 52393
+7. TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256   52392
+8. TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 49196
+9. TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384   49200
+10. TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA   49162
+11. TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA   49161
+12. TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA     49171
+13. TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA     49172
+14. TLS_RSA_WITH_AES_128_GCM_SHA256        156
+15. TLS_RSA_WITH_AES_256_GCM_SHA384        157
+16. TLS_RSA_WITH_AES_128_CBC_SHA           47
+17. TLS_RSA_WITH_AES_256_CBC_SHA           53
+```
+
+### TLS 1.2 ClientHello Cipher Order
+
+```text
+1. TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 49195
+2. TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256   49199
+3. TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 52393
+4. TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256   52392
+5. TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 49196
+6. TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384   49200
+7. TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA    49162
+8. TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA    49161
+9. TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA      49171
+10. TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA     49172
+11. TLS_RSA_WITH_AES_128_GCM_SHA256        156
+12. TLS_RSA_WITH_AES_256_GCM_SHA384        157
+13. TLS_RSA_WITH_AES_128_CBC_SHA           47
+14. TLS_RSA_WITH_AES_256_CBC_SHA           53
+```
+
+### TLS 1.1 and TLS 1.0 ClientHello Cipher Order
+
+```text
+1. TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA 49162
+2. TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA 49161
+3. TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA   49171
+4. TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA   49172
+5. TLS_ECDHE_ECDSA_WITH_RC4_128_SHA     49159
+6. TLS_ECDHE_RSA_WITH_RC4_128_SHA       49169
+7. TLS_DHE_RSA_WITH_AES_128_CBC_SHA     51
+8. TLS_DHE_DSS_WITH_AES_128_CBC_SHA     50
+9. TLS_DHE_RSA_WITH_AES_256_CBC_SHA     57
+10. TLS_RSA_WITH_AES_128_CBC_SHA        47
+11. TLS_RSA_WITH_AES_256_CBC_SHA        53
+12. TLS_RSA_WITH_3DES_EDE_CBC_SHA       10
+13. TLS_RSA_WITH_RC4_128_SHA            5
+14. TLS_RSA_WITH_RC4_128_MD5            4
+```
+
+### Active Extension and List Order
+
+These lists are sent in strict order when the relevant extension is present:
+
+```text
+supported_groups:
+1. x25519      29
+2. secp256r1   23
+3. secp384r1   24
+4. secp521r1   25
+
+ec_point_formats:
+1. uncompressed 0
+
+ALPN:
+1. h2
+2. http/1.1
+
+TLS 1.3 supported_versions:
+1. TLSv1.3 772
+2. TLSv1.2 771
+
+TLS 1.3 signature_algorithms:
+1. rsa_pss_rsae_sha256       2052
+2. rsa_pss_rsae_sha384       2053
+3. ecdsa_secp256r1_sha256    1027
+4. ecdsa_secp384r1_sha384    1283
+5. rsa_pkcs1_sha256          1025
+6. rsa_pkcs1_sha384          1281
+
+TLS 1.2 signature_algorithms:
+1. sha256+rsa
+2. sha256+ecdsa
+3. sha384+rsa
+4. sha384+ecdsa
+5. sha1+rsa
+```
+
+The TLS 1.3 key share contains one X25519 entry using the X25519 base point.
+SNI is added when the target has a usable hostname and is not an IPv4 literal.
 
 Arguments:
 

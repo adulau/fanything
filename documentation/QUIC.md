@@ -68,6 +68,22 @@ handshake messages, and reuses the TLS feature extraction logic. Extension order
 is preserved after GREASE removal, so clients that vary TLS extension order
 produce different full fingerprints.
 
+## GREASE
+
+QUIC fingerprints here reuse TLS ClientHello and ServerHello fields carried in
+QUIC Initial packets. GREASE therefore has same meaning as in TLS: reserved,
+intentionally unknown values sent to keep protocol extension points working.
+
+GREASE may appear inside embedded TLS fields such as cipher suites, extensions,
+supported groups, supported versions, signature algorithms, key share, and ALPN.
+Typical numeric pattern is `0x0A0A`, `0x1A1A`, `0x2A2A`, through `0xFAFA`.
+
+`fanfp.py` removes GREASE values from parsed numeric TLS lists before emitting
+`quic|client|...` and `quic|server|...` features. Reason: GREASE values are
+meant to vary and should not dominate correlation.
+
+Reference: [RFC 8701](https://www.rfc-editor.org/rfc/rfc8701.html).
+
 ## Active Request Defaults
 
 No active QUIC scanner is implemented in this repository. There is no QUIC
