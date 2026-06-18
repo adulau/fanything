@@ -27,6 +27,10 @@ TLS_CLIENT_HELLO = 1
 TLS_SERVER_HELLO = 2
 SSH_MSG_KEXINIT = 20
 QUIC_INITIAL = 0
+IKEV2_SA = 33
+IKEV2_KE = 34
+IKEV2_NOTIFY = 41
+IKEV2_RESPONSE = 0x20
 QUIC_INITIAL_SALTS = {
     0x00000001: bytes.fromhex("38762cf7f55934b34d179ae6a4c80cadccbb7f0a"),
     0xFF00001D: bytes.fromhex("afbfec289993d24c9e9786f19c6111e04390a899"),
@@ -43,6 +47,10 @@ def u16s(data: bytes) -> List[int]:
 
 def join_ints(values: Iterable[int]) -> str:
     return "-".join(str(v) for v in values if not is_grease(v))
+
+
+def join_values(values: Iterable[object]) -> str:
+    return "-".join(str(v) for v in values)
 
 
 def simhash128(features: str) -> str:
@@ -697,6 +705,105 @@ def parse_ssh(payload: bytes) -> Optional[Tuple[str, str]]:
     return parse_ssh_kexinit(rest, software) or ("peer", empty_ssh_features(software))
 
 
+def parse_ike_sa_payload(body: bytes) -> str:
+    proposals: List[str] = []
+    offset = 0
+    while offset + 8 <= len(body):
+        proposal_len = struct.unpack_from("!H", body, offset + 2)[0]
+        if proposal_len < 8 or offset + proposal_len > len(body):
+            break
+
+        proposal_num = body[offset + 4]
+        protocol_id = body[offset + 5]
+        spi_size = body[offset + 6]
+        num_transforms = body[offset + 7]
+        transform_offset = offset + 8 + spi_size
+        proposal_end = offset + proposal_len
+        transforms: List[str] = []
+
+        for _ in range(num_transforms):
+            if transform_offset + 8 > proposal_end:
+                break
+            transform_len = struct.unpack_from("!H", body, transform_offset + 2)[0]
+            if transform_len < 8 or transform_offset + transform_len > proposal_end:
+                break
+            transform_type = body[transform_offset + 4]
+            transform_id = struct.unpack_from("!H", body, transform_offset + 6)[0]
+            value = f"{transform_type}={transform_id}"
+
+            attr_offset = transform_offset + 8
+            transform_end = transform_offset + transform_len
+            while attr_offset + 4 <= transform_end:
+                attr_type = struct.unpack_from("!H", body, attr_offset)[0]
+                attr_value = struct.unpack_from("!H", body, attr_offset + 2)[0]
+                if attr_type == 0x800E:
+                    value += f".{attr_value}"
+                attr_offset += 4
+
+            transforms.append(value)
+            transform_offset += transform_len
+
+        proposals.append(f"{protocol_id or proposal_num}:{','.join(transforms)}")
+        offset += proposal_len
+
+    return ";".join(proposals)
+
+
+def parse_ikev2(payload: bytes) -> Optional[Tuple[str, str]]:
+    if len(payload) >= 4 and payload[:4] == b"\x00\x00\x00\x00":
+        payload = payload[4:]
+    if len(payload) < 28:
+        return None
+
+    next_payload = payload[16]
+    version = payload[17]
+    major = version >> 4
+    minor = version & 0x0F
+    if major != 2:
+        return None
+
+    exchange_type = payload[18]
+    flags = payload[19]
+    total_len = struct.unpack_from("!I", payload, 24)[0]
+    if total_len < 28:
+        return None
+    total_len = min(total_len, len(payload))
+
+    role = "responder" if flags & IKEV2_RESPONSE else "initiator"
+    first_payload = next_payload
+    offset = 28
+    payload_types: List[int] = []
+    notify_types: List[int] = []
+    sa = ""
+    ke_group = ""
+
+    while next_payload and offset + 4 <= total_len:
+        current = next_payload
+        this_next = payload[offset]
+        payload_len = struct.unpack_from("!H", payload, offset + 2)[0]
+        if payload_len < 4 or offset + payload_len > total_len:
+            break
+        body = payload[offset + 4 : offset + payload_len]
+
+        payload_types.append(current)
+        if current == IKEV2_SA:
+            sa = parse_ike_sa_payload(body)
+        elif current == IKEV2_KE and len(body) >= 4:
+            ke_group = str(struct.unpack_from("!H", body, 0)[0])
+        elif current == IKEV2_NOTIFY and len(body) >= 4:
+            notify_types.append(struct.unpack_from("!H", body, 2)[0])
+
+        next_payload = this_next
+        offset += payload_len
+
+    features = (
+        f"ike|{role}|v={major}.{minor}|ex={exchange_type}|flags={flags}"
+        f"|np={first_payload}|p={join_values(payload_types)}|sa={sa}"
+        f"|ke={ke_group}|n={join_values(notify_types)}"
+    )
+    return role, features
+
+
 def emit(protocol: str, role: str, features: str, segment: Union[TcpSegment, UdpDatagram]) -> Dict[str, object]:
     fp, digest, similarity_fp, similarity_digest = fan_fingerprint(
         protocol, role, "passive", features
@@ -773,6 +880,18 @@ def extract(
         if key not in seen:
             seen.add(key)
             yield emit(protocol, role, features, datagram)
+
+    for datagram in udp_datagrams(read_pcap(path)):
+        if datagram.sport not in (500, 4500) and datagram.dport not in (500, 4500):
+            continue
+        ike = parse_ikev2(datagram.payload)
+        if not ike:
+            continue
+        role, features = ike
+        key = ("ike", role, features, tuple(datagram.flow.items()))
+        if key not in seen:
+            seen.add(key)
+            yield emit("ike", role, features, datagram)
 
 
 def main() -> int:
