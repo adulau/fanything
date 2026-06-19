@@ -375,6 +375,47 @@ those server modes. The SSH harness starts a deterministic local SSH test
 server and validates `fanything-ssh.nse`. The QUIC harness validates passive
 QUIC Initial extraction against the Chromium pcap fixture.
 
+## Wireshark live dissection
+
+The `wireshark-plugin/fanfp.lua` post-dissector computes FAN/1 fingerprints
+in real time as Wireshark dissects frames. It runs on every packet and adds a
+**FAN/1 Fingerprints** tree to the packet detail pane for any frame that
+carries a supported handshake — TLS, DTLS, QUIC, SSH, IKEv2, or RDP X.224.
+
+![Wireshark showing FAN/1 fingerprints for a DTLS capture](documentation/fanfp-wireshark.png)
+
+The detail pane shows the `protocol`, `role`, canonical `features` string, and
+the full `fan1:…:sha256:…` fingerprint for each detected handshake in the
+selected packet. Multiple fingerprints can appear in a single frame when both
+handshake directions are visible at once.
+
+**Loading the plugin**
+
+Pass the script on the command line to avoid installing it globally:
+
+```bash
+wireshark -X lua_script:wireshark-plugin/fanfp.lua capture.pcap
+tshark   -X lua_script:wireshark-plugin/fanfp.lua -r capture.pcap -T fields \
+         -e fanfp.protocol -e fanfp.role -e fanfp.fingerprint
+```
+
+Or copy `wireshark-plugin/fanfp.lua` to your Wireshark personal Lua plugins
+folder (`Help › About Wireshark › Folders › Personal Lua Plugins`) and restart
+Wireshark so the plugin loads automatically for every capture.
+
+**Display filters**
+
+Once the plugin is loaded, `fanfp.*` fields are available as display filters:
+
+| Filter | Effect |
+|---|---|
+| `fanfp.fingerprint` | Show all packets with a FAN/1 fingerprint |
+| `fanfp.protocol == "dtls"` | DTLS handshake frames only |
+| `fanfp.protocol == "ike"` | IKEv2 handshake frames only |
+| `fanfp.protocol == "rdp"` | RDP X.224 connection frames only |
+| `fanfp.role == "client"` | Client-side fingerprints only |
+| `fanfp.role == "server"` | Server-side fingerprints only |
+
 ## MISP correlation hints
 
 Recommended storage approaches:
